@@ -1,12 +1,10 @@
-﻿#define STRICT
-#define WIN32_LEAN_AND_MEAN
+﻿#define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <windows.h>
 #include <dwmapi.h>
 #include <deque>
 #include <chrono>
 #include <algorithm>
-#include <cmath>
 #include <thread>
 #include <functional>
 
@@ -55,6 +53,18 @@ inline RECT GetVirtualScreenRect() noexcept
     return r;
 }
 
+static BITMAPINFO MakeBitmapInfo(const int w, const int h)
+{
+    BITMAPINFO bi{};
+    bi.bmiHeader.biSize = sizeof(bi.bmiHeader);
+    bi.bmiHeader.biWidth = w;
+    bi.bmiHeader.biHeight = -h;
+    bi.bmiHeader.biPlanes = 1;
+    bi.bmiHeader.biBitCount = 32;
+    bi.bmiHeader.biCompression = BI_RGB;
+    return bi;
+}
+
 // 32-bit backbuffer for full-screen overlay
 struct Backbuffer final
 {
@@ -78,19 +88,13 @@ struct Backbuffer final
 
     [[nodiscard]] bool EnsureSize(HDC refDC, int W, int H) noexcept
     {
-        if (W == w && H == h && memDC && dib)
+        if (W <= w && H <= h && memDC && dib)
             return true;
         Release();
 
-        BITMAPINFO bi{};
-        bi.bmiHeader.biSize = sizeof(bi.bmiHeader);
-        bi.bmiHeader.biWidth = W;
-        bi.bmiHeader.biHeight = -H;
-        bi.bmiHeader.biPlanes = 1;
-        bi.bmiHeader.biBitCount = 32;
-        bi.bmiHeader.biCompression = BI_RGB;
-
-        if (!(dib = CreateDIBSection(refDC, &bi, DIB_RGB_COLORS, &bits, nullptr, 0)))
+        BITMAPINFO bi = MakeBitmapInfo(W, H);
+        dib = CreateDIBSection(refDC, &bi, DIB_RGB_COLORS, &bits, nullptr, 0);
+        if (!dib)
             return false;
 
         memDC = CreateCompatibleDC(refDC);
@@ -135,14 +139,7 @@ struct TempIconSurf final
             return true;
         Release();
 
-        BITMAPINFO bi{};
-        bi.bmiHeader.biSize = sizeof(bi.bmiHeader);
-        bi.bmiHeader.biWidth = W;
-        bi.bmiHeader.biHeight = -H;
-        bi.bmiHeader.biPlanes = 1;
-        bi.bmiHeader.biBitCount = 32;
-        bi.bmiHeader.biCompression = BI_RGB;
-
+        BITMAPINFO bi = MakeBitmapInfo(W, H);
         dib = CreateDIBSection(refDC, &bi, DIB_RGB_COLORS, &bits, nullptr, 0);
         if (!dib)
             return false;
@@ -155,10 +152,9 @@ struct TempIconSurf final
 };
 
 // Updates cursor visual data when system cursor changes
-inline void RefreshCursorVisual(CursorVisual& cv) noexcept
+inline void RefreshCursorVisual(CursorVisual& cv, CURSORINFO ci) noexcept
 {
-    CURSORINFO ci{ sizeof(ci) };
-    if (!GetCursorInfo(&ci) || ci.flags != CURSOR_SHOWING || !ci.hCursor || (ci.hCursor == cv.hCur))
+    if (ci.hCursor == cv.hCur)
         return;
 
     cv.hCur = ci.hCursor;
@@ -212,14 +208,14 @@ inline void UpdateTrail(std::deque<Sample>& trail, const POINT& ptNow,
         trail.pop_front();
 }
 
-void ReleaseTintCache()
+static inline void ReleaseTintCache()
 {
     if (sTintDC)
     {
-        if (sTintBMP && sTintOld)
-            SelectObject(sTintDC, sTintOld);
         if (sTintBMP)
         {
+            if (sTintOld)
+                SelectObject(sTintDC, sTintOld);
             DeleteObject(sTintBMP);
             sTintBMP = nullptr;
         }
@@ -237,9 +233,8 @@ static void DrawTrail(HWND hwnd, HDC screenDC, Backbuffer& bb, TempIconSurf& tmp
     const CursorVisual& cv, const std::deque<Sample>& trail, const RECT& vs) noexcept
 {
     if (!tmp.EnsureSize(screenDC, cv.width, cv.height))
-    {
         return;
-    }
+
     bb.Clear();
     const auto now = std::chrono::steady_clock::now();
 
@@ -264,14 +259,7 @@ static void DrawTrail(HWND hwnd, HDC screenDC, Backbuffer& bb, TempIconSurf& tmp
             sTintBits = nullptr;
         }
 
-        BITMAPINFO bi{};
-        bi.bmiHeader.biSize = sizeof(bi.bmiHeader);
-        bi.bmiHeader.biWidth = cv.width;
-        bi.bmiHeader.biHeight = -cv.height;
-        bi.bmiHeader.biPlanes = 1;
-        bi.bmiHeader.biBitCount = 32;
-        bi.bmiHeader.biCompression = BI_RGB;
-
+        BITMAPINFO bi = MakeBitmapInfo(cv.width, cv.height);
         sTintBMP = CreateDIBSection(screenDC, &bi, DIB_RGB_COLORS, &sTintBits, nullptr, 0);
         if (!sTintBMP || !sTintBits)
             return; // Skip frame if allocation failed
@@ -369,17 +357,17 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) noex
     RECT* pVs = reinterpret_cast<RECT*>(GetWindowLongPtr(hwnd, GWLP_USERDATA));
     switch (msg)
     {
-    case WM_DESTROY:
-        PostQuitMessage(0);
-        break;
-    case WM_ERASEBKGND:
-        return 1;
-    case WM_DISPLAYCHANGE:
-        if (pVs)
-            *pVs = GetVirtualScreenRect();
-        break;
-    default:
-        break;
+        case WM_DESTROY:
+            PostQuitMessage(0);
+            break;
+        case WM_ERASEBKGND:
+            return 1;
+        case WM_DISPLAYCHANGE:
+            if (pVs)
+                *pVs = GetVirtualScreenRect();
+            break;
+        default:
+            break;
     }
 
     return DefWindowProc(hwnd, msg, wParam, lParam);
@@ -580,8 +568,21 @@ int WINAPI wWinMain(
             }
         }
 
-        // Draw trail
-        RefreshCursorVisual(cv);
-        DrawTrail(hwnd, screenDC, bb, tmp, cv, trail, vs);
+        CURSORINFO ci{ sizeof(ci) };
+        if (!GetCursorInfo(&ci) || ci.flags != CURSOR_SHOWING || !ci.hCursor)
+        {
+            const auto now = std::chrono::steady_clock::now();
+            while (!trail.empty() &&
+                std::chrono::duration_cast<std::chrono::milliseconds>(now - trail.front().t).count() > (gTrailFadeMs + 50.f))
+                trail.pop_front();
+
+            if (!trail.empty())
+                DrawTrail(hwnd, screenDC, bb, tmp, cv, trail, vs);
+        }
+        else
+        {
+            RefreshCursorVisual(cv, ci);
+            DrawTrail(hwnd, screenDC, bb, tmp, cv, trail, vs);
+        }
     }
 }
