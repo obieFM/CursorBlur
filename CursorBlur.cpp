@@ -12,18 +12,15 @@
 constexpr int kMaxTrailSize = 500; // Max count of trail samples
 
 // Launch arguments
-static float    gSensitivity = 0.03f; // Fade intensity relative to cursor speed
-static float    gTrailFadeMs = 50.f;  // How long each sample takes to fade out
-static BYTE     gTrailMaxAlpha = 10;  // Trail starting opacity
-// Optional tint applied to trail
-static BYTE TintR = 255;
-static BYTE TintG = 255;
-static BYTE TintB = 255;
+static float gSensitivity = 0.03f; // Fade intensity relative to cursor speed
+static float gTrailFadeMs = 50.f;  // How long each sample takes to fade out
+static BYTE gTrailMaxAlpha = 10;  // Trail starting opacity
+static BYTE TintR = 255, TintG = 255, TintB = 255; // Optional tint applied to trail
 
 // Cache of current cursor bitmap
 static HCURSOR sLastCursor = nullptr;
-static int     sLastW = 0, sLastH = 0;
-static HDC     sTintDC = nullptr;
+static int sLastW = 0, sLastH = 0;
+static HDC sTintDC = nullptr;
 static HBITMAP sTintBMP = nullptr;
 static HGDIOBJ sTintOld = nullptr;
 static void* sTintBits = nullptr;
