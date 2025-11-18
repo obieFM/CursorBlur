@@ -1,3 +1,5 @@
+![](https://github.com/obieFM/CursorBlur/blob/main/demo.gif)
+
 # CursorBlur
 
 **An overlay for Windows that draws a motion blur trail behind your mouse cursor.**
